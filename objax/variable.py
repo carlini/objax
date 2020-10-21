@@ -53,9 +53,10 @@ class BaseVar(abc.ABC):
     def value(self, tensor: JaxArray):
         raise NotImplementedError('Pure method')
 
-    def assign(self, tensor: JaxArray):
+    def assign(self, tensor: JaxArray, check=True):
         """Sets the value of the variable."""
-        self.assert_assigned_type_and_shape_match(tensor)
+        if check:
+            self.assert_assigned_type_and_shape_match(tensor)
         self.value = tensor
 
     def reduce(self, tensors: JaxArray):
@@ -79,9 +80,12 @@ class BaseVar(abc.ABC):
         device_mismatch_error = f"Can not replicate a variable that is currently on {self_device} devices to {tensor_device} devices."
         assert (tensor_device is None) or (self_device is None) or (self_device == tensor_device) , device_mismatch_error
 
+        is_trace_safe = isinstance(tensor, jax.interpreters.partial_eval.JaxprTracer) and tensor_shape[1:] == self_shape \
+                        or isinstance(self.value, jax.interpreters.partial_eval.JaxprTracer) and self_shape[1:] == tensor_shape
+
         shape_mismatch_error = f"Assign can not change shape of variable. The current variable shape is {self_shape}, " \
                                f"but the requested new shape is {tensor_shape}."
-        assert tensor_shape == self_shape, shape_mismatch_error
+        assert tensor_shape == self_shape or is_trace_safe or tensor.shape == self.value.shape, shape_mismatch_error
 
 
 class TrainVar(BaseVar):
@@ -108,8 +112,9 @@ class TrainVar(BaseVar):
     def value(self, tensor: JaxArray):
         raise ValueError('Direct assignment not allowed, use TrainRef to update a TrainVar.')
 
-    def assign(self, tensor: JaxArray):
-        self.assert_assigned_type_and_shape_match(tensor)
+    def assign(self, tensor: JaxArray, check=True):
+        if check:
+            self.assert_assigned_type_and_shape_match(tensor)
         self._value = tensor
 
 
@@ -118,7 +123,7 @@ class BaseState(BaseVar):
 
     def reduce(self, tensors: JaxArray):
         if self._reduce:
-            self.assign(self._reduce(tensors))
+            self.assign(self._reduce(tensors), check=False) # Allow the shape to change
 
 
 class TrainRef(BaseState):
